@@ -15,6 +15,7 @@ from sklearn.metrics import mean_squared_error
 from TimeSeriesLoader import TimeSeriesLoader
 from keras.optimizers import SGD
 import numpy as np
+from kerastuner.tuners import BayesianOptimization
 
 import config
 
@@ -24,55 +25,6 @@ ts_folder = 'D:\BloodSugarPredictor\BloodSugarTrainData'
 ts_val_folder = 'D:\BloodSugarPredictor\BloodSugarValidationData'
 filename_format = 'ts_file{}.pkl'
 
-def create_ts_files(dataset, 
-                    start_index, 
-                    end_index, 
-                    history_length, 
-                    step_size, 
-                    target_step, 
-                    num_rows_per_file, 
-                    data_folder):
-    assert step_size > 0
-    assert start_index >= 0
-    
-    if not os.path.exists(data_folder):
-        os.makedirs(data_folder)
-    
-    time_lags = sorted(range(target_step+1, target_step+history_length+1, step_size), reverse=True)
-    col_names = [f'x_lag{i}' for i in time_lags] + ['y']
-    start_index = start_index + history_length
-    if end_index is None:
-        end_index = len(dataset) - target_step
-    
-    rng = range(start_index, end_index)
-    num_rows = len(rng)
-    num_files = math.ceil(num_rows/num_rows_per_file)
-    
-    # for each file.
-    print(f'Creating {num_files} files.')
-    for i in range(num_files):
-        filename = f'{data_folder}/ts_file{i}.pkl'
-        
-        if i % 10 == 0:
-            print(f'{filename}')
-            
-        # get the start and end indices.
-        ind0 = i*num_rows_per_file
-        ind1 = min(ind0 + num_rows_per_file, end_index)
-        data_list = []
-        
-        # j in the current timestep. Will need j-n to j-1 for the history. And j + target_step for the target.
-        for j in range(ind0, ind1):
-            indices = range(j-1, j-history_length-1, -step_size)
-            data = dataset[sorted(indices) + [j+target_step]]
-            
-            # append data to the list.
-            data_list.append(data)
-
-        df_ts = pd.DataFrame(data=data_list, columns=col_names)
-        df_ts.to_pickle(filename)
-            
-    return len(col_names)-1
 
 
 
@@ -128,6 +80,59 @@ step_size = 1  # The sampling rate of the history. Eg. If step_size = 1, then va
 target_step = 3  # The time step in the future to predict. Eg. If target_step = 0, then predict the next timestep after the end of the history period.
                   #                                             If target_step = 3 then predict 3 timesteps after the next timestep ((3+1)*5 minutes after the end of history).
 
+
+def create_ts_files(dataset, 
+                    start_index, 
+                    end_index, 
+                    history_length, 
+                    step_size, 
+                    target_step, 
+                    num_rows_per_file, 
+                    data_folder):
+    assert step_size > 0
+    assert start_index >= 0
+    
+    if not os.path.exists(data_folder):
+        os.makedirs(data_folder)
+    
+    time_lags = sorted(range(target_step+1, target_step+history_length+1, step_size), reverse=True)
+    col_names = [f'x_lag{i}' for i in time_lags] + ['y']
+    start_index = start_index + history_length
+    if end_index is None:
+        end_index = len(dataset) - target_step
+    
+    rng = range(start_index, end_index)
+    num_rows = len(rng)
+    num_files = math.ceil(num_rows/num_rows_per_file)
+    
+    # for each file.
+    print(f'Creating {num_files} files.')
+    for i in range(num_files):
+        filename = f'{data_folder}/ts_file{i}.pkl'
+        
+        if i % 10 == 0:
+            print(f'{filename}')
+            
+        # get the start and end indices.
+        ind0 = i*num_rows_per_file
+        ind1 = min(ind0 + num_rows_per_file, end_index)
+        data_list = []
+        
+        # j in the current timestep. Will need j-n to j-1 for the history. And j + target_step for the target.
+        for j in range(ind0, ind1):
+            indices = range(j-1, j-history_length-1, -step_size)
+            data = dataset[sorted(indices) + [j+target_step]]
+            
+            # append data to the list.
+            data_list.append(data)
+
+        df_ts = pd.DataFrame(data=data_list, columns=col_names)
+        df_ts.to_pickle(filename)
+            
+    return len(col_names)-1
+
+
+
 # The csv creation returns the number of rows and number of features. We need these values below.
 num_timesteps = create_ts_files(sugar_values_scaled,
                                 start_index=0,
@@ -144,41 +149,51 @@ num_timesteps = create_ts_files(sugar_values_scaled,
 tss = TimeSeriesLoader(ts_folder, filename_format)
 
 # Create the Keras model.
-# Use hyperparameter optimization if you have the time.
 
-ts_inputs = tf.keras.Input(shape=(num_timesteps, 1))
+def build_model(hp):
+    ts_inputs = tf.keras.Input(shape=(num_timesteps, 1))
+    x = layers.LSTM(units=hp.Int('units',min_value=10,
+                                    max_value=512,
+                                    step=32))(ts_inputs)
+    x = layers.Dropout(0.2)(x)
+    outputs = layers.Dense(hp.Int('units',min_value=1,
+                                    max_value=10,
+                                    step=1), activation='linear')(x)
 
-# units=10 -> The cell and hidden states will be of dimension 10.
-#             The number of parameters that need to be trained = 4*units*(units+2)
-x = layers.LSTM(units=10)(ts_inputs)
-x = layers.Dropout(0.2)(x)
-outputs = layers.Dense(1, activation='linear')(x)
-model = tf.keras.Model(inputs=ts_inputs, outputs=outputs)
+    model = tf.keras.Model(inputs=ts_inputs, outputs=outputs)
 
-model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=10e-3),
+
+    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=hp.Choice('learning_rate',
+                  values=[1e-2, 1e-3, 1e-4])),
               loss=tf.keras.losses.MeanSquaredError(),
               metrics=['mse'])
 
-print(model.summary())
+    return model
 
-# train in batch sizes of 128.
-BATCH_SIZE = 128
-NUM_EPOCHS = 10
-NUM_CHUNKS = tss.num_chunks()
 
-for epoch in range(NUM_EPOCHS):
-    print('epoch #{}'.format(epoch))
-    for i in range(NUM_CHUNKS):
-        X, y = tss.get_chunk(i)
+# create a new keras tuner that overrides run_trial so that we can feed it multiple training datasets in a single trial
+class TimeSeriesTuner (BayesianOptimization):
+    def __init__(self,hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs):
+        super().__init__(hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs)
+    def run_trial(self, trial, x, y, val_x, val_y, batch_size, epochs):
+        model = self.hypermodel.build(trial.hyperparameters)
+        for epoch in range(epochs):
+          
+            for i in range(tss.num_chunks()):
+                X, Y = tss.get_chunk(i)
         
-        model.fit(x=X, y=y, batch_size=BATCH_SIZE)
+                model.fit(x=X, y=Y, batch_size=batch_size)
+        # shuffle the chunks so they're not in the same order next time around.
+        tss.shuffle_chunks()
+        loss = model.evaluate(val_x, val_y)
+        self.oracle.update_trial(trial.trial_id, {'loss': loss})
+        self.save_model(trial.trial_id, model)
+
+
         
-    # shuffle the chunks so they're not in the same order next time around.
-    tss.shuffle_chunks()
+   
 
 
-# evaluate the model on the validation set.
-#
 # Create the validation CSV like we did before with the training.
 sugar_values_val = df_val['sgv'].values
 sugar_values_val_scaled = scaler.transform(sugar_values_val.reshape(-1, 1)).reshape(-1, )
@@ -204,11 +219,31 @@ features_arr = np.array(features)
 num_records = len(df_val_ts.index)
 features_batchmajor = features_arr.reshape(num_records, -1, 1)
 
+tuner = TimeSeriesTuner(
+    build_model,
+    objective='mse',
+    max_trials=3,
+    executions_per_trial=1,
+    directory=os.path.normpath('D:/keras_tuning'),
+    project_name='kerastuner_bayesian',
+    overwrite=True)
 
-y_pred = model.predict(features_batchmajor).reshape(-1, )
-y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1)).reshape(-1 ,)
+x, y = tss.get_chunk(1)
 
-y_act = df_val_ts['y'].values
-y_act = scaler.inverse_transform(y_act.reshape(-1, 1)).reshape(-1 ,)
+# train in batch sizes of 128.
+BATCH_SIZE = 128
+NUM_EPOCHS = 2
 
-print('validation mean squared error: {}'.format(mean_squared_error(y_act, y_pred)))
+tuner.search(x, y,
+             epochs=NUM_EPOCHS, batch_size=BATCH_SIZE,
+             val_x=features_batchmajor, val_y=df_val_ts['y'].values)
+
+print(tuner.results_summary())
+
+#y_pred = model.predict(features_batchmajor).reshape(-1, )
+#y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1)).reshape(-1 ,)
+
+#y_act = df_val_ts['y'].values
+#y_act = scaler.inverse_transform(y_act.reshape(-1, 1)).reshape(-1 ,)
+
+#print('validation mean squared error: {}'.format(mean_squared_error(y_act, y_pred)))
