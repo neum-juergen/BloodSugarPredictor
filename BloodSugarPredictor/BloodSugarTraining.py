@@ -150,7 +150,7 @@ def build_model(hp):
     model = tf.keras.Model(inputs=ts_inputs, outputs=outputs)
 
 
-    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=hp.Choice('learning_rate',
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=hp.Choice('learning_rate',
                   values=[1e-2, 1e-3, 1e-4])),
               loss=tf.keras.losses.MeanSquaredError(),
               metrics=['mse'])
@@ -218,7 +218,7 @@ features_batchmajor = features_arr.reshape(num_records, -1, 1)
 tuner = TimeSeriesTuner(
     build_model,
     objective='mse',
-    max_trials=2,
+    max_trials=10,
     executions_per_trial=1,
     directory=os.path.normpath('D:/keras_tuning'),
     project_name='kerastuner_bayesian',
@@ -228,7 +228,7 @@ x, y = tss.get_chunk(1)
 
 # train in batch sizes of 128.
 BATCH_SIZE = 128
-NUM_EPOCHS = 2
+NUM_EPOCHS = 5
 
 tuner.search(x, y,
              epochs=NUM_EPOCHS, batch_size=BATCH_SIZE,
