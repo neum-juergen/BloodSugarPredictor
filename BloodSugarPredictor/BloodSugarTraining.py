@@ -1,5 +1,6 @@
-from pymongo import MongoClient
-import pandas as pd
+# This module builds training, validation and test sets. It trains a LSTM model using hyperparameter tuning.
+
+
 import matplotlib.pyplot as plt
 import datetime as dt
 from dateutil.parser import parse as dtparser
@@ -16,44 +17,31 @@ from TimeSeriesLoader import TimeSeriesLoader
 from keras.optimizers import SGD
 import numpy as np
 from kerastuner.tuners import BayesianOptimization
-
+import MongoDbConnector
+import BloodSugarTesting
 import config
-
+import pandas as pd
+import sys
+from pickle import dump
 # honor where honor is due! the framework of this model relies on the tutorial posted here: https://towardsdatascience.com/3-steps-to-forecast-time-series-lstm-with-tensorflow-keras-ba88c6f05237
 
-ts_folder = 'D:\BloodSugarPredictor\BloodSugarTrainData'
-ts_val_folder = 'D:\BloodSugarPredictor\BloodSugarValidationData'
+ts_folder = config.ts_folder
+ts_val_folder = config.ts_val_folder
+ts_test_folder = config.ts_test_folder
 filename_format = 'ts_file{}.pkl'
 
 
 
 
 
+df = MongoDbConnector.get_entries()
+df = MongoDbConnector.transform_df(df)
 
 
-print("Connecting to DB")
-# MongoDB credentials are stored in a seperate py module named config
-client = MongoClient(config.mongo_atlas_string)
-db = client.get_database(config.db_name)
-records = db.entries
-print ("Connection successful")
-print("Building DataFrame")
-df =  pd.DataFrame(list(records.find({"type":"sgv"})))
-#df['DateTime'] = df.apply(lambda row: pd.to_datetime(row.dateString), axis=1)
-df['DateTime'] = pd.to_datetime(df['dateString'])
-print("Building DataFrame successful")
-
-
-print("Plotting recent data...")
-plot = df[df['DateTime']>pd.to_datetime("2021-03-17T00:00:18.992+0200")].plot(x='DateTime',y='sgv')
-#plt.show()
-
-print("Sorting...")
-df.sort_values('DateTime', inplace=True, ascending=True)
 
 print("Building datasets...")
 
-test_cutoff_date = df['DateTime'].max() - timedelta(days=7)
+test_cutoff_date = df['DateTime'].max() - timedelta(days=14)
 val_cutoff_date = test_cutoff_date - timedelta(days=14)
 
 df_test = df[df['DateTime'] > test_cutoff_date]
@@ -73,6 +61,7 @@ sugar_values = df_train['sgv'].values
 # Scaled to work with Neural networks.
 scaler = MinMaxScaler(feature_range=(0, 1))
 sugar_values_scaled = scaler.fit_transform(sugar_values.reshape(-1, 1)).reshape(-1, )
+dump(scaler, open('scaler.pkl', 'wb'))
 
 history_length = 10*24*12  # The history length in 5 minute steps.
 step_size = 1  # The sampling rate of the history. Eg. If step_size = 1, then values from every 5 minutes will be in the history.
@@ -153,12 +142,10 @@ tss = TimeSeriesLoader(ts_folder, filename_format)
 def build_model(hp):
     ts_inputs = tf.keras.Input(shape=(num_timesteps, 1))
     x = layers.LSTM(units=hp.Int('units',min_value=10,
-                                    max_value=512,
-                                    step=32))(ts_inputs)
+                                    max_value=20,
+                                    step=1))(ts_inputs)
     x = layers.Dropout(0.2)(x)
-    outputs = layers.Dense(hp.Int('units',min_value=1,
-                                    max_value=10,
-                                    step=1), activation='linear')(x)
+    outputs = layers.Dense(1, activation='linear')(x)
 
     model = tf.keras.Model(inputs=ts_inputs, outputs=outputs)
 
@@ -173,6 +160,7 @@ def build_model(hp):
 
 # create a new keras tuner that overrides run_trial so that we can feed it multiple training datasets in a single trial
 class TimeSeriesTuner (BayesianOptimization):
+    best_loss = sys.float_info.max
     def __init__(self,hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs):
         super().__init__(hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs)
     def run_trial(self, trial, x, y, val_x, val_y, batch_size, epochs):
@@ -183,11 +171,19 @@ class TimeSeriesTuner (BayesianOptimization):
                 X, Y = tss.get_chunk(i)
         
                 model.fit(x=X, y=Y, batch_size=batch_size)
-        # shuffle the chunks so they're not in the same order next time around.
-        tss.shuffle_chunks()
+            print("Epoch no:"+str(epoch)+" done!")
+            # shuffle the chunks so they're not in the same order next time around.
+            tss.shuffle_chunks()
+        print("Evaluation...")
         loss = model.evaluate(val_x, val_y)
-        self.oracle.update_trial(trial.trial_id, {'loss': loss})
+        print("Evaluation done!")
+        if loss[0]<self.best_loss:
+           model.save(ts_folder+'\\best_model.pb')
+           self.best_loss = loss[0]
+           print("Best mse: "+str(self.best_loss))
+        self.oracle.update_trial(trial.trial_id, {'mse': loss[0]})
         self.save_model(trial.trial_id, model)
+        print("Trial with id "+trial.trial_id+" and loss of "+ str(loss[0]) +" is done!")
 
 
         
@@ -199,7 +195,7 @@ sugar_values_val = df_val['sgv'].values
 sugar_values_val_scaled = scaler.transform(sugar_values_val.reshape(-1, 1)).reshape(-1, )
 
 
-# The csv creation returns the number of rows and number of features. We need these values below.
+
 num_timesteps = create_ts_files(sugar_values_val_scaled,
                                 start_index=0,
                                 end_index=None,
@@ -207,7 +203,7 @@ num_timesteps = create_ts_files(sugar_values_val_scaled,
                                 step_size=step_size,
                                 target_step=target_step,
                                 num_rows_per_file=128*100,
-                                data_folder=ts_val_folder)
+                                data_folder=ts_test_folder)
 
 df_val_ts = pd.read_pickle(ts_val_folder+'\\ts_file0.pkl')
 
@@ -222,7 +218,7 @@ features_batchmajor = features_arr.reshape(num_records, -1, 1)
 tuner = TimeSeriesTuner(
     build_model,
     objective='mse',
-    max_trials=3,
+    max_trials=2,
     executions_per_trial=1,
     directory=os.path.normpath('D:/keras_tuning'),
     project_name='kerastuner_bayesian',
@@ -238,12 +234,23 @@ tuner.search(x, y,
              epochs=NUM_EPOCHS, batch_size=BATCH_SIZE,
              val_x=features_batchmajor, val_y=df_val_ts['y'].values)
 
-print(tuner.results_summary())
 
-#y_pred = model.predict(features_batchmajor).reshape(-1, )
-#y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1)).reshape(-1 ,)
 
-#y_act = df_val_ts['y'].values
-#y_act = scaler.inverse_transform(y_act.reshape(-1, 1)).reshape(-1 ,)
+best_model = tuner.get_best_models(num_models=1)[0]
 
-#print('validation mean squared error: {}'.format(mean_squared_error(y_act, y_pred)))
+
+# Create the test CSV like we did before with the training.
+sugar_values_test = df_test['sgv'].values
+sugar_values_test_scaled = scaler.transform(sugar_values_test.reshape(-1, 1)).reshape(-1, )
+
+
+num_timesteps = create_ts_files(sugar_values_test_scaled,
+                                start_index=0,
+                                end_index=None,
+                                history_length=history_length,
+                                step_size=step_size,
+                                target_step=target_step,
+                                num_rows_per_file=128*100,
+                                data_folder=ts_test_folder)
+
+BloodSugarTesting.test_last_best_model()

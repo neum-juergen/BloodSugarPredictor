@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>ac6f5246-bc7f-4b85-8efe-9a922f5b62d5</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>BloodSugarPredictor.py</StartupFile>
+    <StartupFile>BloodSugarTraining.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -21,8 +21,20 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="BloodSugarPredictor.py" />
+    <Compile Include="BloodSugarPrediction.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="BloodSugarTesting.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="BloodSugarTraining.py" />
     <Compile Include="config.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="MongoDbConnector.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="TestBestModel.py">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="TimeSeriesLoader.py">
