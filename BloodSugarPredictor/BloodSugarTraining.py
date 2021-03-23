@@ -144,7 +144,8 @@ def build_model(hp):
     x = layers.LSTM(units=hp.Int('units',min_value=10,
                                     max_value=20,
                                     step=1))(ts_inputs)
-    x = layers.Dropout(0.2)(x)
+    x = layers.Dropout(hp.Choice('dropout',
+                  values=[0.05, 0.1, 0.2, 0.3, 0.4]))(x)
     outputs = layers.Dense(1, activation='linear')(x)
 
     model = tf.keras.Model(inputs=ts_inputs, outputs=outputs)
