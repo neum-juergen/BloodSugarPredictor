@@ -28,6 +28,7 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="BloodSugarTraining.py" />
+    <Compile Include="config_mockup.py" />
     <Compile Include="config.py">
       <SubType>Code</SubType>
     </Compile>
