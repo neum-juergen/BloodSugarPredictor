@@ -261,3 +261,4 @@ __pycache__/
 *.pyc
 /BloodSugarPredictor/config.py
 /BloodSugarPredictor/scaler.pkl
+/BloodSugarPredictor/hour_scaler.pkl

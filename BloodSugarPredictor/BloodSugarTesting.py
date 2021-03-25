@@ -8,8 +8,6 @@ from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from pickle import load
 
-
-
 def test_last_best_model():
 
     scaler = load(open('scaler.pkl', 'rb'))

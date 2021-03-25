@@ -21,10 +21,15 @@ print(df.head(history_length))
 
 model = keras.models.load_model(config.ts_folder+'\\best_model_trained_on_val.pb')
 scaler = load(open('scaler.pkl', 'rb'))
+
 sugar_values = df['sgv'].values
 sugar_values_scaled = scaler.fit_transform(sugar_values.reshape(-1, 1)).reshape(-1, )
 
-def transform_ts(dataset,  
+hour_scaler = load(open('hour_scaler.pkl', 'rb'))
+hour_values = df['DateTime'].apply(lambda row: row.hour).values
+hour_values_scaled = hour_scaler.fit_transform(hour_values.reshape(-1, 1)).reshape(-1, )
+
+def transform_ts(hour_data, dataset,  
                     end_index, 
                     history_length, 
                     step_size):
@@ -32,7 +37,7 @@ def transform_ts(dataset,
 
     
     time_lags = sorted(range(target_step+1, target_step+history_length+1, step_size), reverse=True)
-    col_names = [f'x_lag{i}' for i in time_lags]
+    col_names = ['hour']+[f'x_lag{i}' for i in time_lags]
     if end_index is None:
         end_index = len(dataset)
 
@@ -41,7 +46,7 @@ def transform_ts(dataset,
          
     indices = range(end_index-1, end_index-history_length-1, -step_size)
     data = dataset[sorted(indices)]
-            
+    data = np.insert(data, 0,hour_data[end_index-1])        
     # append data to the list.
     data_list.append(data)
 
@@ -50,7 +55,7 @@ def transform_ts(dataset,
     return df_ts
 
 
-df_transformed = transform_ts(sugar_values_scaled,end_index=None,history_length=history_length,step_size=step_size)
+df_transformed = transform_ts(hour_values_scaled,sugar_values_scaled,end_index=None,history_length=history_length,step_size=step_size)
 features_arr = np.array(df_transformed)
 
 # reshape for input into LSTM. Batch major format.

@@ -57,11 +57,18 @@ print('Train dates: {} to {}'.format(df_train['DateTime'].min(), df_train['DateT
 print(df_train['sgv'].isnull().values.sum())
 
 sugar_values = df_train['sgv'].values
+hour_values = df_train['DateTime'].apply(lambda row: row.hour).values
+
 
 # Scaled to work with Neural networks.
 scaler = MinMaxScaler(feature_range=(0, 1))
 sugar_values_scaled = scaler.fit_transform(sugar_values.reshape(-1, 1)).reshape(-1, )
 dump(scaler, open('scaler.pkl', 'wb'))
+
+
+hour_scaler = MinMaxScaler(feature_range=(0, 1))
+hour_values_scaled = hour_scaler.fit_transform(hour_values.reshape(-1, 1)).reshape(-1, )
+dump(hour_scaler, open('hour_scaler.pkl', 'wb'))
 
 history_length = 10*24*12  # The history length in 5 minute steps.
 step_size = 1  # The sampling rate of the history. Eg. If step_size = 1, then values from every 5 minutes will be in the history.
@@ -70,7 +77,7 @@ target_step = 3  # The time step in the future to predict. Eg. If target_step = 
                   #                                             If target_step = 3 then predict 3 timesteps after the next timestep ((3+1)*5 minutes after the end of history).
 
 
-def create_ts_files(dataset, 
+def create_ts_files(hour_data, dataset, 
                     start_index, 
                     end_index, 
                     history_length, 
@@ -85,7 +92,7 @@ def create_ts_files(dataset,
         os.makedirs(data_folder)
     
     time_lags = sorted(range(target_step+1, target_step+history_length+1, step_size), reverse=True)
-    col_names = [f'x_lag{i}' for i in time_lags] + ['y']
+    col_names = ['hour']+ [f'x_lag{i}' for i in time_lags] + ['y']
     start_index = start_index + history_length
     if end_index is None:
         end_index = len(dataset) - target_step
@@ -111,10 +118,9 @@ def create_ts_files(dataset,
         for j in range(ind0, ind1):
             indices = range(j-1, j-history_length-1, -step_size)
             data = dataset[sorted(indices) + [j+target_step]]
-            
+            data = np.insert(data, 0,hour_data[j-1])
             # append data to the list.
             data_list.append(data)
-
         df_ts = pd.DataFrame(data=data_list, columns=col_names)
         df_ts.to_pickle(filename)
             
@@ -123,7 +129,7 @@ def create_ts_files(dataset,
 
 
 # The csv creation returns the number of rows and number of features. We need these values below.
-num_timesteps = create_ts_files(sugar_values_scaled,
+num_timesteps = create_ts_files(hour_values_scaled, sugar_values_scaled,
                                 start_index=0,
                                 end_index=None,
                                 history_length=history_length,
@@ -195,9 +201,29 @@ class TimeSeriesTuner (BayesianOptimization):
 sugar_values_val = df_val['sgv'].values
 sugar_values_val_scaled = scaler.transform(sugar_values_val.reshape(-1, 1)).reshape(-1, )
 
+hour_values_val = df_val['DateTime'].apply(lambda row: row.hour).values
+hour_values_val_scaled = hour_scaler.transform(hour_values_val.reshape(-1, 1)).reshape(-1, )
 
 
-num_timesteps = create_ts_files(sugar_values_val_scaled,
+num_timesteps = create_ts_files(hour_values_val_scaled, sugar_values_val_scaled,
+                                start_index=0,
+                                end_index=None,
+                                history_length=history_length,
+                                step_size=step_size,
+                                target_step=target_step,
+                                num_rows_per_file=128*100,
+                                data_folder=ts_val_folder)
+
+
+# Create the test CSV like we did before with the training.
+sugar_values_test = df_test['sgv'].values
+sugar_values_test_scaled = scaler.transform(sugar_values_test.reshape(-1, 1)).reshape(-1, )
+
+hour_values_test = df_test['DateTime'].apply(lambda row: row.hour).values
+hour_values_test_scaled = hour_scaler.transform(hour_values_test.reshape(-1, 1)).reshape(-1, )
+
+
+num_timesteps = create_ts_files(hour_values_test_scaled, sugar_values_test_scaled,
                                 start_index=0,
                                 end_index=None,
                                 history_length=history_length,
@@ -206,14 +232,16 @@ num_timesteps = create_ts_files(sugar_values_val_scaled,
                                 num_rows_per_file=128*100,
                                 data_folder=ts_test_folder)
 
-df_val_ts = pd.read_pickle(ts_val_folder+'\\ts_file0.pkl')
 
+
+df_val_ts = pd.read_pickle(ts_val_folder+'\\ts_file0.pkl')
+num_records = len(df_val_ts.index)
 
 features = df_val_ts.drop('y', axis=1).values
 features_arr = np.array(features)
 
 # reshape for input into LSTM. Batch major format.
-num_records = len(df_val_ts.index)
+
 features_batchmajor = features_arr.reshape(num_records, -1, 1)
 
 tuner = TimeSeriesTuner(
@@ -240,18 +268,6 @@ tuner.search(x, y,
 best_model = tuner.get_best_models(num_models=1)[0]
 
 
-# Create the test CSV like we did before with the training.
-sugar_values_test = df_test['sgv'].values
-sugar_values_test_scaled = scaler.transform(sugar_values_test.reshape(-1, 1)).reshape(-1, )
 
-
-num_timesteps = create_ts_files(sugar_values_test_scaled,
-                                start_index=0,
-                                end_index=None,
-                                history_length=history_length,
-                                step_size=step_size,
-                                target_step=target_step,
-                                num_rows_per_file=128*100,
-                                data_folder=ts_test_folder)
 
 BloodSugarTesting.test_last_best_model()
