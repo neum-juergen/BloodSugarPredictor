@@ -172,25 +172,33 @@ class TimeSeriesTuner (BayesianOptimization):
         super().__init__(hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs)
     def run_trial(self, trial, x, y, val_x, val_y, batch_size, epochs):
         model = self.hypermodel.build(trial.hyperparameters)
-        for epoch in range(epochs):
-          
+        epoch = 0
+        current_mse = sys.float_info.max
+        best_epoch_mse = sys.float_info.max
+        while epoch < epochs and current_mse<=best_epoch_mse:
+            epoch+=1
             for i in range(tss.num_chunks()):
                 X, Y = tss.get_chunk(i)
         
                 model.fit(x=X, y=Y, batch_size=batch_size)
-            print("Epoch no:"+str(epoch)+" done!")
+            
             # shuffle the chunks so they're not in the same order next time around.
             tss.shuffle_chunks()
-        print("Evaluation...")
-        loss = model.evaluate(val_x, val_y)
-        print("Evaluation done!")
-        if loss[0]<self.best_loss:
-           model.save(ts_folder+'\\best_model.pb')
-           self.best_loss = loss[0]
-           print("Best mse: "+str(self.best_loss))
-        self.oracle.update_trial(trial.trial_id, {'mse': loss[0]})
-        self.save_model(trial.trial_id, model)
-        print("Trial with id "+trial.trial_id+" and loss of "+ str(loss[0]) +" is done!")
+            print("Evaluation...")
+            loss = model.evaluate(val_x, val_y)
+            print("Evaluation done!")
+            current_mse = loss[0]
+            if current_mse<best_epoch_mse:
+                best_epoch_mse=current_mse
+                self.oracle.update_trial(trial.trial_id, {'mse': loss[0]},epoch-1)
+                self.save_model(trial.trial_id, model,epoch-1)
+            if current_mse<self.best_loss:
+               model.save(ts_folder+'\\best_model.pb')
+               self.best_loss = loss[0]
+               print("Best mse: "+str(self.best_loss))     
+            print("Epoch no:"+str(epoch)+" done!")
+        
+        print("Trial with id "+trial.trial_id+" and loss of "+ str(best_epoch_mse) +" is done!")
 
 
         
@@ -247,7 +255,7 @@ features_batchmajor = features_arr.reshape(num_records, -1, 1)
 tuner = TimeSeriesTuner(
     build_model,
     objective='mse',
-    max_trials=10,
+    max_trials=100,
     executions_per_trial=1,
     directory=os.path.normpath('D:/keras_tuning'),
     project_name='kerastuner_bayesian',
@@ -255,9 +263,9 @@ tuner = TimeSeriesTuner(
 
 x, y = tss.get_chunk(1)
 
-# train in batch sizes of 128.
+# train in batch sizes
 BATCH_SIZE = 128
-NUM_EPOCHS = 5
+NUM_EPOCHS = 100
 
 tuner.search(x, y,
              epochs=NUM_EPOCHS, batch_size=BATCH_SIZE,
