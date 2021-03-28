@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>ac6f5246-bc7f-4b85-8efe-9a922f5b62d5</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>BloodSugarTraining.py</StartupFile>
+    <StartupFile>BloodSugarPrediction.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>

@@ -260,5 +260,5 @@ paket-files/
 __pycache__/
 *.pyc
 /BloodSugarPredictor/config.py
+/BloodSugarPredictor/*_scaler.pkl
 /BloodSugarPredictor/scaler.pkl
-/BloodSugarPredictor/hour_scaler.pkl
