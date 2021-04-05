@@ -139,7 +139,7 @@ def create_ts_files(hour_data, dataset, dataset_datetimes,
             data_list.append(data)
         df_ts = pd.DataFrame(data=data_list, columns=col_names)
         df_ts.to_pickle(filename)
-        print(df_ts.head(1))
+        
             
     return len(col_names)-1
 
@@ -184,9 +184,12 @@ def build_model(hp):
 
 # create a new keras tuner that overrides run_trial so that we can feed it multiple training datasets in a single trial
 class TimeSeriesTuner (BayesianOptimization):
-    best_loss = sys.float_info.max
+    
     def __init__(self,hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs):
+        self.best_loss = sys.float_info.max
+        self.best_epochs = sys.float_info.max
         super().__init__(hypermodel, objective, max_trials, num_initial_points=2, seed=None, hyperparameters=None, tune_new_entries=True, allow_new_entries=True, **kwargs)
+
     def run_trial(self, trial, x, y, val_x, val_y, batch_size, epochs):
         model = self.hypermodel.build(trial.hyperparameters)
         epoch = 0
@@ -212,9 +215,9 @@ class TimeSeriesTuner (BayesianOptimization):
             if current_mse<self.best_loss:
                model.save(ts_folder+'\\best_model.pb')
                self.best_loss = loss[0]
+               self.best_epochs = epoch
                print("Best mse: "+str(self.best_loss))     
             print("Epoch no:"+str(epoch)+" done!")
-        
         print("Trial with id "+trial.trial_id+" and loss of "+ str(best_epoch_mse) +" is done!")
 
 
@@ -276,7 +279,7 @@ features_batchmajor = features_arr.reshape(num_records, -1, 1)
 tuner = TimeSeriesTuner(
     build_model,
     objective='mse',
-    max_trials=100,
+    max_trials=3,
     executions_per_trial=1,
     directory=os.path.normpath('D:/keras_tuning'),
     project_name='kerastuner_bayesian',
@@ -293,10 +296,32 @@ tuner.search(x, y,
              val_x=features_batchmajor, val_y=df_val_ts['y'].values)
 
 
+#BloodSugarTesting.test_last_best_model()
 
-best_model = tuner.get_best_models(num_models=1)[0]
+def train_model(model,epochs,batch_size):
+    epoch = 0
+    while epoch < epochs:
+            epoch+=1
+            for i in range(tss.num_chunks()):
+                X, Y = tss.get_chunk(i)
+                model.fit(x=X, y=Y, batch_size=batch_size)
+            tss.shuffle_chunks()
+    return model
+
+hps = tuner.get_best_hyperparameters()[0]
+model = tuner.hypermodel.build(hps)
+epoch = 0
+tss.add_chunk(filename=ts_val_folder+'\\ts_file0.pkl')
+
+model=train_model(model,tuner.best_epochs,BATCH_SIZE)
+
+print("Error on test after training on train+validation:")
+df_test_ts = pd.read_pickle(ts_test_folder+'\\ts_file0.pkl')
+BloodSugarTesting.test_model_on(model,df_test_ts,scaler)
 
 
-
-
-BloodSugarTesting.test_last_best_model()
+print("Training on all data")
+tss.add_chunk(filename=ts_test_folder+'\\ts_file0.pkl')
+model = tuner.hypermodel.build(hps)
+model=train_model(model,tuner.best_epochs,BATCH_SIZE)
+model.save(ts_folder+'\\best_model_fullytrained.pb')

@@ -9,7 +9,7 @@ filename_format = 'ts_file{}.pkl'
 class TimeSeriesLoader(object):
     def __init__(self, ts_folder, filename_format):
         self.ts_folder = ts_folder
-        
+        self.filenames = []
         # find the number of files.
         i = 0
         file_found = True
@@ -17,6 +17,7 @@ class TimeSeriesLoader(object):
             filename = self.ts_folder + '/' + filename_format.format(i)
             file_found = os.path.exists(filename)
             if file_found:
+                self.filenames.append(filename)
                 i += 1
                 
         self.num_files = i
@@ -30,7 +31,7 @@ class TimeSeriesLoader(object):
         assert (idx >= 0) and (idx < self.num_files)
         
         ind = self.files_indices[idx]
-        filename = self.ts_folder + '/' + filename_format.format(ind)
+        filename = self.filenames[ind]
         df_ts = pd.read_pickle(filename)
         num_records = len(df_ts.index)
         
@@ -45,4 +46,9 @@ class TimeSeriesLoader(object):
     def shuffle_chunks(self):
         np.random.shuffle(self.files_indices)
 
-
+    def add_chunk(self,filename):
+        file_found = os.path.exists(filename)  
+        if file_found:
+            self.filenames.append(filename)
+            self.num_files += 1
+            self.files_indices = np.append(self.files_indices,len(self.files_indices)-1)
