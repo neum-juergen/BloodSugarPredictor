@@ -279,7 +279,7 @@ features_batchmajor = features_arr.reshape(num_records, -1, 1)
 tuner = TimeSeriesTuner(
     build_model,
     objective='mse',
-    max_trials=3,
+    max_trials=15,
     executions_per_trial=1,
     directory=os.path.normpath('D:/keras_tuning'),
     project_name='kerastuner_bayesian',

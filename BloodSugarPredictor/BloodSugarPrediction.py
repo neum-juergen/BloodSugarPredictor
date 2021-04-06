@@ -19,10 +19,7 @@ target_step = 3  # The time step in the future to predict. Eg. If target_step = 
 df = MongoDbConnector.get_entries(history_length)
 
 
-print(len(df))
-print(df.head(history_length))
-
-model = keras.models.load_model(config.ts_folder+'\\best_model_trained_on_val.pb')
+model = keras.models.load_model(config.ts_folder+'\\best_model_fullytrained.pb')
 scaler = load(open('scaler.pkl', 'rb'))
 
 sugar_values = df['sgv'].values
